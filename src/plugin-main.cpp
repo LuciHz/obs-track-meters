@@ -97,7 +97,7 @@ bool obs_module_load(void)
 
                 // Create dock and register with OBS frontend
                 // so it appears in View > Docks menu
-		g_dock = new QDockWidget("Audio Track Meters", main);
+		g_dock = new QDockWidget("Track Meters", main);
                 g_dock->setObjectName("AudioTrackMetersDock");
                 g_dock->setWidget(container);
                 g_dock->setFeatures(QDockWidget::DockWidgetMovable |
@@ -111,7 +111,7 @@ bool obs_module_load(void)
 
                 // Register with OBS so it appears in View > Docks menu
                 obs_frontend_add_dock_by_id("obs-audio-meters-dock",
-                                            "Audio Track Meters",
+                                            "Track Meters",
                                             container);
 
                 // Wire settings button
