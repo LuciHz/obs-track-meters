@@ -1,59 +1,48 @@
-# OBS Plugin Template
+# Track Meters
 
-## Introduction
+Per-track audio meters dock for OBS Studio (Windows).
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+Displays post-mix, pre-encoder dBFS levels for all 6 audio tracks with peak hold, configurable target lines, and clipping warnings.
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+## Features
 
-## Supported Build Environments
+- 6 simultaneous track meters with logarithmic dBFS scale (-60 to 0 dB)
+- Peak hold with 1-second hold time and slow decay
+- Colour gradient: dark green → bright green → yellow → orange → red
+- Target lines at -12 dB (Min) and -3 dB (Max)
+- Per-track visibility toggles via Settings dialog
+- Batched clipping warnings with 10-second cooldown
+- Dock toggleable via View > Docks menu
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+## Requirements
 
-## Quick Start
+- OBS Studio 30.0 or newer (Windows 64-bit)
+- Tested on OBS 32.1.2
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+## Installation
 
-## Documentation
+1. Download the latest release ZIP from the [Releases page](https://github.com/LuciHz/obs-track-meters/releases).
+2. Close OBS Studio.
+3. Extract the ZIP into your OBS install directory, typically `C:\Program Files\obs-studio\`. The `obs-plugins\` and `data\` folders will merge with the existing OBS folders.
+4. Launch OBS. The "Track Meters" dock will appear. If not visible, enable it via View > Docks > Track Meters.
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+If the plugin fails to load, install the [Microsoft Visual C++ Redistributable 2015–2022 (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
-Suggested reading to get up and running:
+## Building from source
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+Requires Visual Studio 2022, CMake, Git, and Windows 11 SDK.
 
-## GitHub Actions & CI
+```powershell
+cmake --preset windows-x64
+cmake --build build_x64 --config Release
+```
 
-Default GitHub Actions workflows are available for the following repository actions:
+The compiled DLL will be at `build_x64\Release\obs-audio-meters.dll`.
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
+## License
 
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
+GPL-2.0 — see [LICENSE](LICENSE).
 
-### Retrieving build artifacts
+## Acknowledgements
 
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+Built on the [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) scaffolding from the OBS Project.
