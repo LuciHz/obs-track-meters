@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QWidget>
+#include <atomic>
 #include <cmath>
 
 #include "audio-meter.hpp"
@@ -15,13 +16,16 @@
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-audio-meters", "en-US")
 
-static AudioMeterWidget *g_meterWidget = nullptr;
-static QDockWidget      *g_dock        = nullptr;
+static std::atomic<AudioMeterWidget *> g_meterWidget{nullptr};
+static QDockWidget                    *g_dock = nullptr;
 
 static void audio_callback(void *param, size_t mix_idx,
                             struct audio_data *data)
 {
-    AudioMeterWidget *widget = static_cast<AudioMeterWidget *>(param);
+    (void)param;  // ignore — read atomic global instead
+
+    AudioMeterWidget *widget =
+        g_meterWidget.load(std::memory_order_acquire);
     if (!widget || !data)
         return;
 
@@ -34,7 +38,8 @@ static void audio_callback(void *param, size_t mix_idx,
     for (int ch = 0; ch < MAX_AV_PLANES; ch++) {
         if (!data->data[ch])
             break;
-        const float *samples = reinterpret_cast<const float *>(data->data[ch]);
+        const float *samples =
+            reinterpret_cast<const float *>(data->data[ch]);
         for (int f = 0; f < frames; f++) {
             float s = fabsf(samples[f]);
             if (s > peak)
@@ -52,17 +57,30 @@ static void audio_callback(void *param, size_t mix_idx,
 static void disconnect_audio()
 {
     audio_t *audio = obs_get_audio();
-    if (!audio || !g_meterWidget)
+    if (!audio)
         return;
+
+    AudioMeterWidget *widget =
+        g_meterWidget.load(std::memory_order_acquire);
+    if (!widget)
+        return;
+
+    // Disconnect first so no new callbacks fire
     for (int i = 0; i < MAX_AUDIO_MIXES; i++)
-        audio_output_disconnect(audio, i, audio_callback, g_meterWidget);
+        audio_output_disconnect(audio, i, audio_callback, widget);
+
+    // Now null the global. Any callback already in flight finishes
+    // using its local 'widget' pointer; new ones see nullptr and exit.
+    g_meterWidget.store(nullptr, std::memory_order_release);
 }
 
 bool obs_module_load(void)
 {
     obs_frontend_add_event_callback(
         [](enum obs_frontend_event event, void *) {
-            if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+            static bool s_initialized = false;
+            if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING && !s_initialized) {
+                s_initialized = true;
                 QMainWindow *main =
                     static_cast<QMainWindow *>(obs_frontend_get_main_window());
                 if (!main)
@@ -87,17 +105,16 @@ bool obs_module_load(void)
                 toolbar->setSizePolicy(QSizePolicy::Preferred,
                                        QSizePolicy::Fixed);
 
-                g_meterWidget = new AudioMeterWidget();
-                g_meterWidget->setSizePolicy(QSizePolicy::Expanding,
-                                             QSizePolicy::Expanding);
+                AudioMeterWidget *widget = new AudioMeterWidget();
+                widget->setSizePolicy(QSizePolicy::Expanding,
+                                      QSizePolicy::Expanding);
 
                 vlay->addWidget(toolbar);
-                vlay->addWidget(g_meterWidget, 1);
+                vlay->addWidget(widget, 1);
                 container->setLayout(vlay);
 
-                // Create dock and register with OBS frontend
-                // so it appears in View > Docks menu
-		g_dock = new QDockWidget("Track Meters", main);
+                // Create dock
+                g_dock = new QDockWidget("Track Meters", main);
                 g_dock->setObjectName("AudioTrackMetersDock");
                 g_dock->setWidget(container);
                 g_dock->setFeatures(QDockWidget::DockWidgetMovable |
@@ -106,7 +123,7 @@ bool obs_module_load(void)
                 g_dock->setMinimumHeight(200);
                 g_dock->setMinimumWidth(200);
 
-		// Physically dock it to the right side
+                // Physically dock it to the right side
                 main->addDockWidget(Qt::RightDockWidgetArea, g_dock);
 
                 // Register with OBS so it appears in View > Docks menu
@@ -114,25 +131,28 @@ bool obs_module_load(void)
                                             "Track Meters",
                                             container);
 
-                // Wire settings button
-                QObject::connect(settBtn, &QToolButton::clicked, [=]() {
+                // Wire settings button — capture widget by value
+                QObject::connect(settBtn, &QToolButton::clicked, [widget]() {
                     SettingsDialog *dlg =
-                        new SettingsDialog(g_meterWidget, g_dock);
+                        new SettingsDialog(widget, g_dock);
                     dlg->setAttribute(Qt::WA_DeleteOnClose);
                     dlg->exec();
                 });
+
+                // Publish widget pointer atomically BEFORE connecting
+                // audio callbacks, so callbacks always see a valid pointer
+                g_meterWidget.store(widget, std::memory_order_release);
 
                 // Connect audio callbacks
                 audio_t *audio = obs_get_audio();
                 for (int i = 0; i < MAX_AUDIO_MIXES; i++)
                     audio_output_connect(audio, i, nullptr,
-                                         audio_callback, g_meterWidget);
+                                         audio_callback, widget);
 
                 blog(LOG_INFO, "[obs-audio-meters] Loaded");
 
             } else if (event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN) {
                 disconnect_audio();
-                g_meterWidget = nullptr;
                 blog(LOG_INFO, "[obs-audio-meters] Audio disconnected");
             }
         },
@@ -143,8 +163,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-    disconnect_audio();
-    g_meterWidget = nullptr;
-    g_dock        = nullptr;
+    disconnect_audio();  // handles g_meterWidget nulling internally
+    g_dock = nullptr;
     blog(LOG_INFO, "[obs-audio-meters] Unloaded");
 }
