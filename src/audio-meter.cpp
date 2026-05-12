@@ -185,20 +185,20 @@ void AudioMeterWidget::onTimer()
             m_pendingClip[i] = true;
             anyClipped = true;
         }
-        // Peak hold
-        float hold = m_hold[i].load();
-        if (hold > m_displayHold[i]) {
-            m_displayHold[i] = hold;
+        // Peak hold — read the atomic, then reset it for the next window.
+        // Only the audio thread writes m_hold via compare; the GUI thread
+        // exchanges to read-and-clear. This avoids the GUI thread fighting
+        // the audio thread for the same cache line every tick.
+        float audioHold = m_hold[i].exchange(DB_MIN);
+        if (audioHold > m_displayHold[i]) {
+            m_displayHold[i] = audioHold;
             m_holdTimer[i]   = PEAK_HOLD_TICKS;
+        } else if (m_holdTimer[i] > 0) {
+            m_holdTimer[i]--;
         } else {
-            if (m_holdTimer[i] > 0) {
-                m_holdTimer[i]--;
-            } else {
-                m_displayHold[i] -= 0.5f;
-                if (m_displayHold[i] < DB_MIN)
-                    m_displayHold[i] = DB_MIN;
-                m_hold[i].store(m_displayHold[i]);
-		}
+            m_displayHold[i] -= 0.5f;
+            if (m_displayHold[i] < DB_MIN)
+                m_displayHold[i] = DB_MIN;
         }
     }
 
