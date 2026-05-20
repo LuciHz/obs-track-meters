@@ -16,7 +16,7 @@ Displays post-mix, pre-encoder dBFS levels for all 6 audio tracks with peak hold
 
 ## Requirements
 
-- OBS Studio 30.0 or newer (Windows 64-bit)
+- OBS Studio 32.0 or newer (Windows 64-bit)
 - Tested on OBS 32.1.2
 
 ## Installation
