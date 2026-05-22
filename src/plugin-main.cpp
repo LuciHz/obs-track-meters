@@ -17,27 +17,33 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-audio-meters", "en-US")
 
 static std::atomic<AudioMeterWidget *> g_meterWidget{nullptr};
-static QDockWidget                    *g_dock = nullptr;
 
-static void audio_callback(void *param, size_t mix_idx,
+// Number of valid channels in the OBS audio mix, set once at startup.
+// Only channels 0..(g_audioChannels-1) have valid data in audio_data::data[].
+// Channels beyond this may be non-null but point to uninitialized/freed memory.
+static int g_audioChannels = 2;
+
+static void audio_callback(void *, size_t mix_idx,
                             struct audio_data *data)
 {
-    (void)param;  // ignore — read atomic global instead
-
-    AudioMeterWidget *widget =
-        g_meterWidget.load(std::memory_order_acquire);
-    if (!widget || !data)
+    AudioMeterWidget *widget = g_meterWidget.load(std::memory_order_acquire);
+    if (!widget)
         return;
 
-    if (!widget->isTrackEnabled((int)mix_idx))
+    if (!data || data->frames == 0 || data->frames > 192000)
         return;
 
-    const int frames = (int)data->frames;
-    float     peak   = 0.0f;
+    if (mix_idx >= MAX_AUDIO_MIXES)
+        return;
 
-    for (int ch = 0; ch < MAX_AV_PLANES; ch++) {
+    const int frames   = (int)data->frames;
+    const int channels = g_audioChannels;
+    float     peak     = 0.0f;
+
+    for (int ch = 0; ch < channels; ch++) {
         if (!data->data[ch])
-            break;
+            continue;
+
         const float *samples =
             reinterpret_cast<const float *>(data->data[ch]);
         for (int f = 0; f < frames; f++) {
@@ -65,12 +71,9 @@ static void disconnect_audio()
     if (!widget)
         return;
 
-    // Disconnect first so no new callbacks fire
     for (int i = 0; i < MAX_AUDIO_MIXES; i++)
-        audio_output_disconnect(audio, i, audio_callback, widget);
+        audio_output_disconnect(audio, i, audio_callback, nullptr);
 
-    // Now null the global. Any callback already in flight finishes
-    // using its local 'widget' pointer; new ones see nullptr and exit.
     g_meterWidget.store(nullptr, std::memory_order_release);
 }
 
@@ -81,18 +84,20 @@ bool obs_module_load(void)
             static bool s_initialized = false;
             if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING && !s_initialized) {
                 s_initialized = true;
-                QMainWindow *main =
-                    static_cast<QMainWindow *>(obs_frontend_get_main_window());
-                if (!main)
-                    return;
 
-                // Container widget with settings button and meter
+                // Read the actual channel count from the audio output.
+                audio_t *audio = obs_get_audio();
+                if (audio) {
+                    int ch = (int)audio_output_get_channels(audio);
+                    if (ch >= 1 && ch <= MAX_AV_PLANES)
+                        g_audioChannels = ch;
+                }
+
                 QWidget *container  = new QWidget();
                 QVBoxLayout *vlay   = new QVBoxLayout(container);
                 vlay->setContentsMargins(0, 0, 0, 0);
                 vlay->setSpacing(2);
 
-                // Settings button row — fixed height
                 QWidget *toolbar     = new QWidget();
                 QHBoxLayout *hlay    = new QHBoxLayout(toolbar);
                 hlay->setContentsMargins(4, 2, 4, 2);
@@ -113,43 +118,41 @@ bool obs_module_load(void)
                 vlay->addWidget(widget, 1);
                 container->setLayout(vlay);
 
-                // Create dock
-                g_dock = new QDockWidget("Track Meters", main);
-                g_dock->setObjectName("AudioTrackMetersDock");
-                g_dock->setWidget(container);
-                g_dock->setFeatures(QDockWidget::DockWidgetMovable |
-                                    QDockWidget::DockWidgetFloatable |
-                                    QDockWidget::DockWidgetClosable);
-                g_dock->setMinimumHeight(200);
-                g_dock->setMinimumWidth(200);
-
-                // Physically dock it to the right side
-                main->addDockWidget(Qt::RightDockWidgetArea, g_dock);
-
-                // Register with OBS so it appears in View > Docks menu
+                // obs_frontend_add_dock_by_id creates and manages the
+                // QDockWidget wrapper itself — no double header.
                 obs_frontend_add_dock_by_id("obs-audio-meters-dock",
                                             "Track Meters",
                                             container);
 
-                // Wire settings button — capture widget by value
-                QObject::connect(settBtn, &QToolButton::clicked, [widget]() {
+                // Get the dock OBS just created so Settings dialog can use it.
+                QMainWindow *main =
+                    static_cast<QMainWindow *>(obs_frontend_get_main_window());
+                QDockWidget *dock = nullptr;
+                if (main) {
+                    for (QDockWidget *d : main->findChildren<QDockWidget *>()) {
+                        if (d->objectName() == "obs-audio-meters-dock") {
+                            dock = d;
+                            break;
+                        }
+                    }
+                }
+
+                QObject::connect(settBtn, &QToolButton::clicked, [widget, dock]() {
                     SettingsDialog *dlg =
-                        new SettingsDialog(widget, g_dock);
+                        new SettingsDialog(widget, dock);
                     dlg->setAttribute(Qt::WA_DeleteOnClose);
                     dlg->exec();
                 });
 
-                // Publish widget pointer atomically BEFORE connecting
-                // audio callbacks, so callbacks always see a valid pointer
                 g_meterWidget.store(widget, std::memory_order_release);
 
-                // Connect audio callbacks
-                audio_t *audio = obs_get_audio();
                 for (int i = 0; i < MAX_AUDIO_MIXES; i++)
                     audio_output_connect(audio, i, nullptr,
-                                         audio_callback, widget);
+                                         audio_callback, nullptr);
 
-                blog(LOG_INFO, "[obs-audio-meters] Loaded");
+                blog(LOG_INFO,
+                     "[obs-audio-meters] Loaded (channels: %d)",
+                     g_audioChannels);
 
             } else if (event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN) {
                 disconnect_audio();
@@ -163,7 +166,6 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-    disconnect_audio();  // handles g_meterWidget nulling internally
-    g_dock = nullptr;
+    disconnect_audio();
     blog(LOG_INFO, "[obs-audio-meters] Unloaded");
 }
